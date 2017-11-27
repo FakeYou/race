@@ -1,6 +1,5 @@
-import { World, Body, Plane } from 'p2';
+import { World } from 'p2';
 
-console.log(World);
 
 export default class Physics {
 	constructor(game) {

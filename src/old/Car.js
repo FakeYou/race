@@ -11,67 +11,109 @@ const KEYS = {
 };
 
 export default class Car extends Group {
-	constructor(game) {
+	static DEFAULT = {
+		mass: 2,
+		damping: 0.3,
+		width: 1,
+		height: 2,
+		power: 160,
+		maxSteeringAngle: 0.3,
+		maxSpeed: 60,
+		wheels: [
+			{ x: -0.5, y: -0.6, steering: true, powered: false },
+			{ x: 0.5, y: -0.6, steering: true, powered: false },
+			{ x: -0.5, y: 0.6, steering: false, powered: true },
+			{ x: 0.5, y: 0.6, steering: false, powered: true },
+		]
+	}
+
+	constructor(game, config = Car.DEFAULT) {
 		super();
 
 		this.game = game;
+		this.config = config;
 
 		this.body = new Body({
-			mass: 1,
+			mass: config.mass,
+			damping: config.damping,
 		});
 
-		this.body.addShape(new Box({ width: 4, height: 2 }));
+		this.body.addShape(new Box({ width: config.width, height: config.height }));
 		this.game.physics.world.addBody(this.body);
 
+		this.wheels = config.wheels.map(config => new Wheel(game, this, config));
 		this.steering = 0;
 
-		this.wheels = {
-			frontLeft: new Wheel(game, -1.5, 1.2, { power: false, steering: false }),
-			frontRight: new Wheel(game, -1.5, -1.2, { power: false, steering: false }),
-			backLeft: new Wheel(game, 1.5, 1.2, { power: true }),
-			backRight: new Wheel(game, 1.5, -1.2, { power: true }),
-		};
-
-		this.chassis = new Mesh(
-			new BoxGeometry(4, 1, 2),
-			new MeshNormalMaterial(),
+		this.mesh = new Mesh(
+			new BoxGeometry(config.width, 1, config.height),
+			new MeshNormalMaterial({ wireframe: true }),
 		);
 
-		this.game.physics.world.addConstraint(new RevoluteConstraint(this.body, this.wheels.frontLeft.body, { localPivotA: [-1.5, 1.5], localPivotB: [0, 0]}));
-		this.game.physics.world.addConstraint(new RevoluteConstraint(this.body, this.wheels.frontRight.body, { localPivotA: [-1.5, -1.5], localPivotB: [0, 0]}));
-		this.game.physics.world.addConstraint(new RevoluteConstraint(this.body, this.wheels.backLeft.body, { localPivotA: [1.5, 1.5], localPivotB: [0, 0]}));
-		this.game.physics.world.addConstraint(new RevoluteConstraint(this.body, this.wheels.backRight.body, { localPivotA: [1.5, -1.5], localPivotB: [0, 0]}));
-
-		this.add(this.chassis);
-		this.add(this.wheels.frontLeft);
-		this.add(this.wheels.frontRight);
-		this.add(this.wheels.backLeft);
-		this.add(this.wheels.backRight);
+		this.add(this.mesh);
+		this.wheels.forEach(wheel => this.add(wheel.mesh));
 	}
 
 	update = (delta) => {
-		this.chassis.position.x = this.body.interpolatedPosition[0];
-		this.chassis.position.z = this.body.interpolatedPosition[1];
-		this.chassis.rotation.y = -this.body.interpolatedAngle;
+		this.mesh.position.x = this.body.interpolatedPosition[0];
+		this.mesh.position.z = this.body.interpolatedPosition[1];
+		this.mesh.rotation.y = -this.body.interpolatedAngle;
+
+		this.wheels.forEach(wheel => wheel.update(delta));
 
 		if (this.game.keys[KEYS.A]) {
-			this.steering += (0.8 - this.steering) / 20;
+			this.steering = -this.config.maxSteeringAngle;
 		}
 		else if (this.game.keys[KEYS.D]) {
-			this.steering += (-0.8 - this.steering) / 20;
+			this.steering = this.config.maxSteeringAngle;
 		}
 		else {
-			this.steering += (-0 - this.steering) / 5;
+			this.steering = 0;
 		}
 
-		this.wheels.frontLeft.body.angle = this.body.angle + this.steering;
-		this.wheels.frontRight.body.angle = this.body.angle + this.steering;
-		this.wheels.backLeft.body.angle = this.body.angle;
-		this.wheels.backRight.body.angle = this.body.angle;
+		this.wheels.forEach(wheel => {
+			if (wheel.config.steering && this.steering) {
+				wheel.setAngle(this.steering);
+			}
+		});
 
-		this.wheels.frontLeft.update(delta);
-		this.wheels.frontRight.update(delta);
-		this.wheels.backLeft.update(delta);
-		this.wheels.backRight.update(delta);
+		const currentSpeed = this.getSpeed();
+		const forward = this.getForwardNormal();
+		let force = 0;
+
+		if (this.game.keys[KEYS.W] && currentSpeed < this.config.maxSpeed) {
+			force = this.config.power;
+		}
+		else if (this.game.keys[KEYS.S]) {
+			if (currentSpeed > 0) {
+				force = -this.config.power * 1.3;
+			}
+			else {
+				force = -this.config.power * 0.8;
+			}
+		}
+
+		if (force !== 0) {
+			forward.multiplyScalar(force);
+			this.wheels.forEach(wheel => {
+				if (wheel.config.powered) {
+					wheel.body.applyForce(forward.toArray());
+				}
+			});
+		}
+	}
+
+	getForwardNormal() {
+		return new Vector2(0, -1).rotateAround({ x: 0, y: 0 }, this.body.angle);
+	}
+
+	getForwardVelocity() {
+		const velocity = new Vector2(this.body.velocity[0], this.body.velocity[1]);
+		const normal = new Vector2(0, -1).rotateAround({ x: 0, y: 0 }, this.body.angle);
+		return normal.multiplyScalar(normal.dot(velocity));
+	}
+
+	getSpeed() {
+		const forwardNormal = this.getForwardNormal();
+		return this.getForwardVelocity().dot(forwardNormal);
 	}
 }
